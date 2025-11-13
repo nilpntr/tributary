@@ -37,7 +37,7 @@ type NumberProcessorWorker struct {
 func (w *NumberProcessorWorker) Work(ctx context.Context, step *tributary.Step[NumberProcessorArgs]) error {
 	fmt.Printf("STARTED: [PROCESSOR-%d]\n", step.Args.Number)
 	// Simulate some processing time
-	time.Sleep(time.Duration(100+step.Args.Number*50) * time.Millisecond)
+	time.Sleep(time.Duration(1000+step.Args.Number*200) * time.Millisecond)
 
 	message := fmt.Sprintf("I ran as number %d", step.Args.Number)
 	fmt.Printf("[PROCESSOR-%d] %s\n", step.Args.Number, message)

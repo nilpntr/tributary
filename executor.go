@@ -12,30 +12,6 @@ import (
 	"github.com/nilpntr/tributary/tributarytype"
 )
 
-// runWorker is the main worker loop for executing steps from a queue.
-func (c *Client) runWorker(ctx context.Context, queueName string) {
-	defer c.wg.Done()
-
-	ticker := time.NewTicker(c.config.FetchPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.ctx.Done():
-			// Client is shutting down
-			return
-		case <-c.workerCh:
-			// New steps available, try to fetch
-			c.fetchAndExecute(ctx, queueName)
-		case <-ticker.C:
-			// Poll periodically
-			c.fetchAndExecute(ctx, queueName)
-		}
-	}
-}
-
 // fetchAndExecute fetches available steps from the queue and executes them.
 func (c *Client) fetchAndExecute(ctx context.Context, queueName string) {
 	// Fetch steps that are ready to execute (dependencies satisfied)

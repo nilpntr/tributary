@@ -94,11 +94,7 @@ func (c *Client) listenForNotifications(ctx context.Context) error {
 // notifyWorkers signals local workers to check for new steps.
 // This is called both from LISTEN/NOTIFY and from local insertions.
 func (c *Client) notifyWorkers() {
-	// Send notification in a non-blocking way
-	// If channel is full, workers are already aware of pending work
-	select {
-	case c.workerCh <- struct{}{}:
-	default:
-		// Channel already has a pending signal - workers will wake up
-	}
+	// Use the new subscription-based notification system
+	// This will call all registered worker callbacks simultaneously
+	c.notifyAllWorkers()
 }

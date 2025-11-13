@@ -12,6 +12,10 @@ import (
 	"github.com/nilpntr/tributary/tributaryhook"
 )
 
+// WorkerCallback is called when new work becomes available for workers.
+// Each worker registers a callback that triggers step fetching and execution.
+type WorkerCallback func()
+
 // Client is the main Tributary client for executing workflows and steps.
 type Client struct {
 	config *Config
@@ -24,8 +28,9 @@ type Client struct {
 	cancel  context.CancelFunc
 	ctx     context.Context
 
-	// Worker management
-	workerCh chan struct{} // signals workers to check for new steps
+	// Worker management - subscription-based notification
+	workerSubscriptions map[string]WorkerCallback // maps worker IDs to their callback functions
+	subscriptionMu      sync.RWMutex              // protects workerSubscriptions
 }
 
 // NewClient creates a new Tributary client with the given configuration.
@@ -47,12 +52,42 @@ func NewClient(pool *pgxpool.Pool, config *Config) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Client{
-		config:   config,
-		pool:     pool,
-		ctx:      ctx,
-		cancel:   cancel,
-		workerCh: make(chan struct{}, 1),
+		config:              config,
+		pool:                pool,
+		ctx:                 ctx,
+		cancel:              cancel,
+		workerSubscriptions: make(map[string]WorkerCallback),
 	}, nil
+}
+
+// registerWorker registers a worker callback for the given worker ID.
+// The callback will be invoked whenever new work becomes available.
+func (c *Client) registerWorker(workerID string, callback WorkerCallback) {
+	c.subscriptionMu.Lock()
+	defer c.subscriptionMu.Unlock()
+	c.workerSubscriptions[workerID] = callback
+}
+
+// unregisterWorker removes a worker's callback registration.
+// This should be called when a worker shuts down to prevent memory leaks.
+func (c *Client) unregisterWorker(workerID string) {
+	c.subscriptionMu.Lock()
+	defer c.subscriptionMu.Unlock()
+	delete(c.workerSubscriptions, workerID)
+}
+
+// notifyAllWorkers calls all registered worker callbacks to notify them of available work.
+// This replaces the old channel-based notification system with direct callback invocation.
+func (c *Client) notifyAllWorkers() {
+	c.subscriptionMu.RLock()
+	defer c.subscriptionMu.RUnlock()
+
+	// Call all registered worker callbacks
+	for _, callback := range c.workerSubscriptions {
+		// Call callback in a separate goroutine to avoid blocking
+		// if one worker's callback takes time
+		go callback()
+	}
 }
 
 // Start starts the client and begins processing steps.
@@ -69,11 +104,13 @@ func (c *Client) Start(ctx context.Context) error {
 	// Start notification listener for PostgreSQL LISTEN/NOTIFY
 	c.startNotificationListener(ctx)
 
-	// Start workers for each queue
+	// Start workers for each queue with subscription-based callbacks
 	for queueName, queueConfig := range c.config.Queues {
 		for i := 0; i < queueConfig.NumWorkers; i++ {
+			workerID := fmt.Sprintf("%s-%d", queueName, i)
+
 			c.wg.Add(1)
-			go c.runWorker(ctx, queueName)
+			go c.runWorkerWithSubscription(ctx, queueName, workerID)
 		}
 	}
 
@@ -109,6 +146,46 @@ func (c *Client) Stop(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// runWorkerWithSubscription runs a worker that uses the subscription-based notification system.
+// It registers a callback and uses both notifications and polling to ensure work is processed.
+func (c *Client) runWorkerWithSubscription(ctx context.Context, queueName string, workerID string) {
+	defer c.wg.Done()
+	defer c.unregisterWorker(workerID)
+
+	// Create a channel for this worker to receive notifications
+	workerNotifyCh := make(chan struct{}, 100) // Buffered to prevent blocking
+
+	// Register callback that sends to this worker's private channel
+	callback := func() {
+		select {
+		case workerNotifyCh <- struct{}{}:
+		default:
+			// Channel full, worker is already notified
+		}
+	}
+
+	c.registerWorker(workerID, callback)
+
+	ticker := time.NewTicker(c.config.FetchPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.ctx.Done():
+			// Client is shutting down
+			return
+		case <-workerNotifyCh:
+			// New steps available via subscription notification
+			c.fetchAndExecute(ctx, queueName)
+		case <-ticker.C:
+			// Poll periodically as backup
+			c.fetchAndExecute(ctx, queueName)
+		}
 	}
 }
 
