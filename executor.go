@@ -59,6 +59,11 @@ func (c *Client) fetchAndExecute(ctx context.Context, queueName string) {
 		}
 		c.executeStep(ctx, stepRow)
 	}
+
+	// After executing steps, notify other workers in case:
+	// 1. Step completions unlock new dependencies
+	// 2. There are still more steps available than we fetched
+	c.notifyWorkers()
 }
 
 // stepRow represents a step fetched from the database.

@@ -35,6 +35,7 @@ type NumberProcessorWorker struct {
 }
 
 func (w *NumberProcessorWorker) Work(ctx context.Context, step *tributary.Step[NumberProcessorArgs]) error {
+	fmt.Printf("STARTED: [PROCESSOR-%d]\n", step.Args.Number)
 	// Simulate some processing time
 	time.Sleep(time.Duration(100+step.Args.Number*50) * time.Millisecond)
 
@@ -183,7 +184,7 @@ func main() {
 	// Create and execute the parallel aggregation workflow
 	fmt.Println("\n=== Creating Parallel Aggregation Workflow ===\n")
 
-	processorCount := 7
+	processorCount := 20
 	workflow := client.NewWorkflow(&tributary.WorkflowOpts{
 		Name: "parallel_aggregation",
 	})
