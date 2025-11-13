@@ -128,7 +128,7 @@ func main() {
 	// Connect to PostgreSQL
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/tributary?sslmode=disable"
+		dbURL = "postgres://postgres:postgres@localhost:5433/tributary?sslmode=disable"
 	}
 
 	if err := tributarymigrate.New(dbURL, nil).Up(); err != nil {

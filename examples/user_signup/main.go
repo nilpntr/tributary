@@ -150,7 +150,7 @@ func main() {
 	// Connect to PostgreSQL
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/tributary?sslmode=disable"
+		dbURL = "postgres://postgres:postgres@localhost:5433/tributary?sslmode=disable"
 	}
 
 	encryptionKeyHex := "89bad4444b316893ff9b215c8c9a2b617a911aef494918969489272ffb50a1f3"

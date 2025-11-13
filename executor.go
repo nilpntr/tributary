@@ -81,13 +81,21 @@ type stepRow struct {
 	CreatedAt           time.Time
 }
 
-// fetchAvailableSteps fetches steps that are ready to execute.
+// fetchAvailableSteps fetches steps that are ready to execute and atomically marks them as running.
 // A step is ready if:
 // 1. It's in 'available' state
 // 2. Its scheduled_at time has passed
 // 3. All its dependencies are completed
 func (c *Client) fetchAvailableSteps(ctx context.Context, queueName string, limit int) ([]stepRow, error) {
-	rows, err := c.pool.Query(ctx, `
+	// Use a transaction to atomically fetch and mark steps as running
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// First, fetch available steps with row-level locking
+	rows, err := tx.Query(ctx, `
 		SELECT
 			s.id, s.workflow_execution_id, s.task_name, s.state, s.attempt, s.max_attempts,
 			s.kind, s.args, s.result, s.queue, s.priority, s.timeout_seconds,
@@ -113,6 +121,7 @@ func (c *Client) fetchAvailableSteps(ctx context.Context, queueName string, limi
 	defer rows.Close()
 
 	var steps []stepRow
+	var stepIDs []int64
 	for rows.Next() {
 		var step stepRow
 		err := rows.Scan(
@@ -124,9 +133,36 @@ func (c *Client) fetchAvailableSteps(ctx context.Context, queueName string, limi
 			return nil, err
 		}
 		steps = append(steps, step)
+		stepIDs = append(stepIDs, step.ID)
 	}
+	rows.Close()
 
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// If we found steps, atomically mark them as running within the same transaction
+	if len(stepIDs) > 0 {
+		// Convert slice to PostgreSQL array format
+		_, err = tx.Exec(ctx, `
+			UPDATE steps
+			SET state = 'running', attempted_at = NOW()
+			WHERE id = ANY($1)
+		`, stepIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		// Update the local step objects to reflect the new state
+		for i := range steps {
+			steps[i].State = "running"
+			now := time.Now()
+			steps[i].AttemptedAt = &now
+		}
+	}
+
+	// Commit the transaction to release locks and apply changes
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -134,14 +170,8 @@ func (c *Client) fetchAvailableSteps(ctx context.Context, queueName string, limi
 }
 
 // executeStep executes a single step.
+// Note: The step is already marked as 'running' by fetchAvailableSteps.
 func (c *Client) executeStep(ctx context.Context, stepRow stepRow) {
-	// Mark step as running
-	err := c.markStepRunning(ctx, stepRow.ID)
-	if err != nil {
-		c.config.Logger.Error("Error marking step as running", Field{Key: "step_id", Value: stepRow.ID}, Field{Key: "error", Value: err})
-		return
-	}
-
 	// Get worker for this step kind
 	workerInterface, ok := c.config.Workers.Get(stepRow.Kind)
 	if !ok {
@@ -158,7 +188,7 @@ func (c *Client) executeStep(ctx context.Context, stepRow stepRow) {
 
 	// Run BeforeWork hooks to decrypt/transform args
 	argsBytes := stepRow.Args
-	argsBytes, err = runBeforeWorkHooks(ctx, c.config.Hooks, stepRow.ID, stepRow.Kind, argsBytes)
+	argsBytes, err := runBeforeWorkHooks(ctx, c.config.Hooks, stepRow.ID, stepRow.Kind, argsBytes)
 	if err != nil {
 		c.markStepFailed(ctx, stepRow, fmt.Errorf("BeforeWork hook failed: %w", err))
 		return
