@@ -81,20 +81,14 @@ func (w *AggregatorWorker) Work(ctx context.Context, step *tributary.Step[Aggreg
 		return fmt.Errorf("no dependency results available")
 	}
 
-	var allMessages []string
+	processorResults := tributary.GetAllResultsTyped[ProcessorResult](step)
+	if len(processorResults) != step.Args.ProcessorCount {
+		return fmt.Errorf("expected %d processorresults, got % d", step.Args.ProcessorCount, len(processorResults))
+	}
 
-	// Collect results from all processor steps
-	for i := 0; i < step.Args.ProcessorCount; i++ {
-		taskName := fmt.Sprintf("process_%d", i)
-		if resultBytes, ok := step.DependencyResults[taskName]; ok && resultBytes != nil {
-			var result ProcessorResult
-			if err := json.Unmarshal(resultBytes, &result); err != nil {
-				return fmt.Errorf("failed to unmarshal result from %s: %w", taskName, err)
-			}
-			allMessages = append(allMessages, result.Message)
-		} else {
-			return fmt.Errorf("missing result from processor %d", i)
-		}
+	var allMessages []string
+	for _, result := range processorResults {
+		allMessages = append(allMessages, result.Message)
 	}
 
 	// Create final aggregated message

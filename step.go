@@ -141,7 +141,7 @@ const (
 
 // GetResultTyped retrieves a typed result from a specific dependency step by its task name.
 // This is a helper function to provide type-safe access to dependency results.
-func GetResultTyped[R ResultType](s *Step[StepArgs], taskName string) *R {
+func GetResultTyped[R ResultType, T StepArgs](s *Step[T], taskName string) *R {
 	if s.DependencyResults == nil {
 		return nil
 	}
@@ -161,7 +161,7 @@ func GetResultTyped[R ResultType](s *Step[StepArgs], taskName string) *R {
 
 // GetAllResultsTyped retrieves all results of a specific type from all dependency steps.
 // This is useful for scenarios where multiple steps of the same type contribute results.
-func GetAllResultsTyped[R ResultType](s *Step[StepArgs]) []R {
+func GetAllResultsTyped[R ResultType, T StepArgs](s *Step[T]) []R {
 	if s.DependencyResults == nil {
 		return nil
 	}
@@ -192,7 +192,7 @@ func GetAllResultsTyped[R ResultType](s *Step[StepArgs]) []R {
 
 // GetResultsByPatternTyped retrieves results from dependency steps whose task names match a pattern.
 // The pattern is matched using simple string contains logic.
-func GetResultsByPatternTyped[R ResultType](s *Step[StepArgs], pattern string) []R {
+func GetResultsByPatternTyped[R ResultType, T StepArgs](s *Step[T], pattern string) []R {
 	if s.DependencyResults == nil {
 		return nil
 	}
