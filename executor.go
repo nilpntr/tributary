@@ -14,8 +14,15 @@ import (
 
 // fetchAndExecute fetches available steps from the queue and executes them.
 func (c *Client) fetchAndExecute(ctx context.Context, queueName string) {
+	// Calculate how many jobs this worker can handle
+	// River-style: only fetch what this worker can process immediately
+	maxSteps := c.maxStepsToFetch(queueName)
+	if maxSteps <= 0 {
+		return // No capacity for new work
+	}
+
 	// Fetch steps that are ready to execute (dependencies satisfied)
-	steps, err := c.fetchAvailableSteps(ctx, queueName, 10)
+	steps, err := c.fetchAvailableSteps(ctx, queueName, maxSteps)
 	if err != nil {
 		// Log error but continue
 		c.config.Logger.Error("Error fetching steps", Field{Key: "error", Value: err}, Field{Key: "queue", Value: queueName})
@@ -148,6 +155,15 @@ func (c *Client) fetchAvailableSteps(ctx context.Context, queueName string, limi
 	}
 
 	return steps, nil
+}
+
+// maxStepsToFetch determines how many steps this worker should fetch.
+// Following River's approach: each worker fetches only what it can process immediately.
+func (c *Client) maxStepsToFetch(queueName string) int {
+	// Each worker should only fetch one step at a time to ensure optimal
+	// work distribution across all workers. This prevents any single worker
+	// from hoarding multiple steps while others remain idle.
+	return 1
 }
 
 // executeStep executes a single step.
